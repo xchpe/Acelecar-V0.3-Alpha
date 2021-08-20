@@ -1,0 +1,140 @@
+#include "Simple_MPU6050.h"         // incluye libreria Simple_MPU6050
+#include "BTS7960.h"
+#define MPU6050_ADDRESS_AD0_LOW     0x68      // direccion I2C con AD0 en LOW o sin conexion
+#define MPU6050_ADDRESS_AD0_HIGH    0x69      // direccion I2C con AD0 en HIGH
+#define MPU6050_DEFAULT_ADDRESS     MPU6050_ADDRESS_AD0_LOW // por defecto AD0 en LOW
+#define sync 12
+#define yaw 0
+#define pitch 1
+float dataTurn;
+float dataGo;
+Simple_MPU6050 mpu;       // crea objeto con nombre mpu
+ENABLE_MPU_OVERFLOW_PROTECTION();   // activa proteccion
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const uint8_t EN = 8;
+const uint8_t L_PWM_D = 9;
+const uint8_t R_PWM_D = 10;
+const uint8_t L_PWM_I = 5;
+const uint8_t R_PWM_I = 6;
+
+BTS7960 motorController(EN, L_PWM_D, R_PWM_D);
+BTS7960 motorController_M2(EN, L_PWM_I, R_PWM_I);
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+void giroderecha (void);
+void giroizquierda (void);
+// #define OFFSETS  -5114,     484,    1030,      46,     -14,       6  // Colocar valores personalizados
+
+
+#define spamtimer(t) for (static uint32_t SpamTimer; (uint32_t)(millis() - SpamTimer) >= (t); SpamTimer = millis())
+// spamtimer funcion para generar demora al escribir en monitor serie sin usar delay()
+
+#define printfloatx(Name,Variable,Spaces,Precision,EndTxt) print(Name); {char S[(Spaces + Precision + 3)];Serial.print(F(" ")); Serial.print(dtostrf((float)Variable,Spaces,Precision ,S));}Serial.print(EndTxt);
+// printfloatx funcion para mostrar en monitor serie datos para evitar el uso se multiples print()
+
+// mostrar_valores funcion que es llamada cada vez que hay datos disponibles desde el sensor
+
+/////////////////////////////////////////////////////////////////////////////
+void giraderecha(void){
+    for(int speed = 0 ; speed < 130; speed+=10)
+  {
+   motorController.TurnRight(speed);
+   motorController_M2.TurnLeft(speed);
+  }
+  
+ }
+
+void giraizquierda(void){
+    for(int speed = 0 ; speed < 130; speed+=10)
+  {
+   motorController.TurnLeft(speed);
+   motorController_M2.TurnRight(speed);
+  }
+  
+ }
+void avance(void){
+      for(int speed = 0 ; speed < 130; speed+=10)
+  {
+   motorController.TurnRight(speed);
+   motorController_M2.TurnRight(speed);
+  }
+}
+
+void detener(void){
+  motorController.Stop();
+  motorController_M2.Stop();
+}
+////////////////////////////////////////////////////////////////////////////// 
+void mostrar_valores (int16_t *gyro, int16_t *accel, int32_t *quat, uint32_t *timestamp) {  
+   digitalWrite(sync,HIGH);
+  uint8_t SpamDelay = 100;      // demora para escribir en monitor serie de 100 mseg
+  Quaternion q;         // variable necesaria para calculos posteriores
+  VectorFloat gravity;        // variable necesaria para calculos posteriores
+  float ypr[3] = { 0, 0, 0 };     // array para almacenar valores de yaw, pitch, roll
+  float xyz[3] = { 0, 0, 0 };     // array para almacenar valores convertidos a grados de yaw, pitch, roll
+  spamtimer(SpamDelay) {      // si han transcurrido al menos 100 mseg entonces proceder
+    mpu.GetQuaternion(&q, quat);    // funcion para obtener valor para calculo posterior
+    mpu.GetGravity(&gravity, &q);   // funcion para obtener valor para calculo posterior
+    mpu.GetYawPitchRoll(ypr, &q, &gravity); // funcion obtiene valores de yaw, ptich, roll
+    mpu.ConvertToDegrees(ypr, xyz);   // funcion convierte a grados sexagesimales
+    Serial.printfloatx(F("Yaw")  , xyz[0], 9, 4, F(",   "));  // muestra en monitor serie rotacion de eje Z, yaw
+    Serial.printfloatx(F("Pitch"), xyz[1], 9, 4, F(",   "));  // muestra en monitor serie rotacion de eje Y, pitch
+    Serial.printfloatx(F("Roll") , xyz[2], 9, 4, F(",   "));  // muestra en monitor serie rotacion de eje X, roll
+    Serial.println();       // salto de linea
+    dataTurn=xyz[yaw];
+    dataGo=xyz[pitch];
+  }
+
+      if(dataTurn > -15 && dataGo < 15 && dataGo > -15 ){
+        giraderecha();
+        
+      }
+      else{
+          if(dataTurn < 15 && dataGo < 15 && dataGo > -15 ){
+          giraizquierda();
+          }
+          else{
+                }
+            }
+      if(dataGo > -15 && dataTurn < 15 && dataTurn > -15 ){
+          avance();
+      }
+      else{
+          if(dataGo < 15 && dataTurn < 15 && dataTurn > -15 ){
+            detener();
+          }
+      }
+          
+          
+      }
+  
+
+void setup() {
+  motorController.Enable();
+ motorController_M2.Enable();
+  pinMode(sync,OUTPUT);
+  digitalWrite(sync,LOW);
+#if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE  // activacion de bus I2C a 400 Khz
+  Wire.begin();
+  Wire.setClock(400000);
+#elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+  Fastwire::setup(400, true);
+#endif
+  
+  Serial.begin(115200);     // inicializacion de monitor serie a 115200 bps
+  while (!Serial);      // espera a enumeracion en caso de modelos con USB nativo
+  Serial.println(F("Inicio:"));   // muestra texto estatico
+#ifdef OFFSETS                // si existen OFFSETS
+  Serial.println(F("Usando Offsets predefinidos"));     // texto estatico
+  mpu.SetAddress(MPU6050_ADDRESS_AD0_LOW).load_DMP_Image(OFFSETS);  // inicializacion de sensor
+
+#else                   // sin no existen OFFSETS
+
+  mpu.SetAddress(MPU6050_ADDRESS_AD0_LOW).CalibrateMPU().load_DMP_Image();  // inicializacion de sensor
+#endif
+  mpu.on_FIFO(mostrar_valores);   // llamado a funcion mostrar_valores si memoria FIFO tiene valores
+}
+
+void loop() {
+  mpu.dmp_read_fifo();    // funcion que evalua si existen datos nuevos en el sensor y llama
+}       // a funcion mostrar_valores si es el caso
